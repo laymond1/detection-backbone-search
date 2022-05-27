@@ -19,7 +19,7 @@ from ofa.utils import (
     MyGlobalAvgPool2d,
 )
 
-from ofa.imagenet_classification.networks import ProxylessNASNets
+from proxyless_nets import ProxylessNASNets
 from search_space import Blocks, blocks_key
 
 
@@ -181,7 +181,13 @@ class MobileNetV2(ProxylessNASNets):
 
         blocks = []
         for ops_config in config["blocks"]:
-            for block_config in ops_config:
+            if isinstance(ops_config, list):
+                _ops = nn.ModuleList()
+                for block_config in ops_config:
+                    _ops.append(ResidualBlock.build_from_config(block_config))
+                blocks.append(_ops)
+            else:
+                block_config = ops_config
                 blocks.append(ResidualBlock.build_from_config(block_config))
 
         net = ProxylessNASNets(first_conv, blocks, stage_ends_idx, feature_mix_layer, classifier)
@@ -191,6 +197,16 @@ class MobileNetV2(ProxylessNASNets):
             net.set_bn_param(momentum=0.1, eps=1e-3)
 
         return net
+    # Network Sampling
+    def sample_from_net(self, arch=None):
+        net = nn.ModuleList()
+        net.append(self.first_conv)
+        for i, ops in enumerate(self.blocks):
+            net.append(ops[arch[i]])
+        net.append(self.feature_mix_layer)
+        net.append(self.global_avg_pool)
+        net.append(self.classifier)
+        return nn.Sequential(*net)
 
     # Override forward function
     def forward(self, x, rngs=None):
@@ -222,9 +238,14 @@ if __name__ == "__main__":
     net.build_from_config(net_config)
 
     net_config = net.config(arch = [0,1,2,1,1, 1,2,2,2,2, 1,2,0,2,1, 1,2])
+    net.build_from_config(net_config)
+
+    sample_net = net.sample_from_net()
+
     estimator = MBv2LatencyTable(url='latency_lookup_table/mobile_lut.yaml')
+
     estimator.count_flops_given_config(net_config)
-    estimator.predict_network_latency_given_config(net_config)
+    latency = estimator.predict_network_latency_given_config(net_config)
     # estimator.predict_network_latency(net) # can not use
 
     net.eval()
