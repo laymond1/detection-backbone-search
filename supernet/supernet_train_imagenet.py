@@ -213,7 +213,7 @@ def train(model, device, args, *, val_interval, bn_process=False, all_iters=None
         
         if args.cand_mode == 'latency':
             # for latency
-            lut = MBv2LatencyTable(local_dir='.', url='mobile.yaml')
+            lut = MBv2LatencyTable(url='./latency_lookup_table/mobile.yaml')
             get_random_cand = lambda:tuple(np.random.randint(3) for i in range(len_cand))
             latency_l, latency_r, latency_step = 70, 80, 2
             bins = [[i, i+latency_step] for i in range(latency_l, latency_r, latency_step)]
