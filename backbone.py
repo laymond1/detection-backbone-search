@@ -1,6 +1,7 @@
 import json
 from collections import OrderedDict
 import numpy as np
+import torch
 import torch.nn as nn
 
 from ofa.utils.layers import (
@@ -58,13 +59,13 @@ class BackBoneMobileNetV2(MyNetwork):
 
         inverted_residual_setting = [
             # t, c, n, s
-            [1, 16, 1, 1],
-            [expand_ratio, 24, 2, 2],
-            [expand_ratio, 32, 3, 2],
-            [expand_ratio, 64, 4, 2],
-            [expand_ratio, 96, 3, 1],
-            [expand_ratio, 160, 3, 2],
-            [expand_ratio, 320, 1, 1],
+            [1, 32, 1, 1],
+            [expand_ratio, 64, 2, 2], # 2-P2/4 - 2th
+            [expand_ratio, 128, 3, 2], # 3-P3/8 - 4th
+            [expand_ratio, 256, 4, 2], # 4-P4/16 - 7th
+            [expand_ratio, 512, 3, 1], 
+            [expand_ratio, 512, 3, 2], # 6-P5/32 - 14th
+            [expand_ratio, 1024, 1, 1],
         ]
         self.inverted_residual_setting = np.array(inverted_residual_setting)
         
@@ -273,19 +274,7 @@ if __name__ == "__main__":
     output['3'].shape
     output['6'].shape
     output['13'].shape
-
-    outputs = [output['3'], output['6'], output['13']]
-
-    from torchvision.ops import FeaturePyramidNetwork
-    fpn = FeaturePyramidNetwork(in_channels_list, 256)
-    fpn = FeaturePyramidNetwork(in_channels_list, net.out_channels)
-    output = fpn(output)
-
-    len(output)
-
-    output['3'].shape
-    output['6'].shape
-    output['13'].shape
+  
 
     anchors = [
     [10,13, 16,30, 33,23],  # P3/8
@@ -295,9 +284,14 @@ if __name__ == "__main__":
     len(anchors)
 
     from yolov5.models.yolo import Detect
-    detector = Detect(nc=80, anchors=anchors, ch=in_channels_list)
-    detector
-    detector(output)
+    from yolov5.utils.loss import ComputeLoss
+    detector = Detect(nc=80, anchors=anchors, ch=[256, 256, 256])
+    outputs = [output['3'], output['6'], output['13']]
+    temp = detector(outputs)
+
+    detector.eval()
+    temp = detector(outputs)
+    loss = ComputeLoss(detector)
 
     state_dict = torch.load('./models/latest_model.pt')
     net.load_state_dict(state_dict)
