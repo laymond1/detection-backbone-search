@@ -30,13 +30,11 @@ class MobileNetV2(ProxylessNASNets):
         width_mult=1.0,
         bn_param=(0.1, 1e-3),
         dropout_rate=0.2,
-        ks=None,
         expand_ratio=None,
         depth_param=None,
         stage_width_list=None,
     ):
 
-        ks = 3 if ks is None else ks # kernel size
         expand_ratio = 6 if expand_ratio is None else expand_ratio
 
         input_channel = 32
@@ -53,13 +51,13 @@ class MobileNetV2(ProxylessNASNets):
 
         inverted_residual_setting = [
             # t, c, n, s
-            [1, 16, 1, 1],
-            [expand_ratio, 24, 2, 2],
-            [expand_ratio, 32, 3, 2],
-            [expand_ratio, 64, 4, 2],
-            [expand_ratio, 96, 3, 1],
-            [expand_ratio, 160, 3, 2],
-            [expand_ratio, 320, 1, 1],
+            [1, 32, 1, 1],
+            [expand_ratio, 64, 2, 2], # 2-P2/4 - 2th
+            [expand_ratio, 128, 3, 2], # 3-P3/8 - 4th
+            [expand_ratio, 256, 4, 2], # 4-P4/16 - 7th
+            [expand_ratio, 512, 3, 1], 
+            [expand_ratio, 512, 3, 2], # 6-P5/32 - 14th
+            [expand_ratio, 1024, 1, 1],
         ]
         self.inverted_residual_setting = np.array(inverted_residual_setting)
 
@@ -71,8 +69,6 @@ class MobileNetV2(ProxylessNASNets):
         if stage_width_list is not None:
             for i in range(len(inverted_residual_setting)):
                 inverted_residual_setting[i][1] = stage_width_list[i]
-
-        ks = val2list(ks, sum([n for _, _, n, _ in inverted_residual_setting]) - 1) # [ks, ..., ks] kernel size list
 
         # first conv layer
         first_conv = ConvLayer(
@@ -197,16 +193,34 @@ class MobileNetV2(ProxylessNASNets):
             net.set_bn_param(momentum=0.1, eps=1e-3)
 
         return net
+
     # Network Sampling
     def sample_from_net(self, arch=None):
-        net = nn.ModuleList()
-        net.append(self.first_conv)
+        assert arch is not None
+        assert len(arch) == len(self.blocks)
+
+        # sample_net = nn.ModuleList()
+        sample_net = []
+        sample_net.append(self.first_conv)
         for i, ops in enumerate(self.blocks):
-            net.append(ops[arch[i]])
-        net.append(self.feature_mix_layer)
-        net.append(self.global_avg_pool)
-        net.append(self.classifier)
-        return nn.Sequential(*net)
+            sample_net.append(ops[arch[i]])
+        sample_net.append(self.feature_mix_layer)
+        sample_net.append(self.global_avg_pool)
+        sample_net.append(self.classifier)
+        return nn.Sequential(*sample_net)
+
+    # Override load_state_dict function
+    def load_state_dict(self, state_dict, **kwargs):
+        current_state_dict = self.state_dict()
+
+        # Only extract stated_dict from Supernet for Object detection backbone
+        for key in state_dict:
+            if key not in current_state_dict:
+                continue
+            else:
+                new_key = key
+            current_state_dict[new_key] = state_dict[key]
+        super(MyNetwork, self).load_state_dict(current_state_dict)
 
     # Override forward function
     def forward(self, x, rngs=None):
@@ -227,6 +241,13 @@ class MobileNetV2(ProxylessNASNets):
 
 if __name__ == "__main__":
 
+    import sys
+    from pathlib import Path
+    FILE = Path(__file__).resolve()
+    ROOT = FILE.parents[1]  # root directory
+    if str(ROOT) not in sys.path:
+        sys.path.append(str(ROOT))
+
     from latency_lookup_table import MBv2LatencyTable
     from backbone import BackBoneMobileNetV2
 
@@ -240,7 +261,7 @@ if __name__ == "__main__":
     net_config = net.config(arch = [0,1,2,1,1, 1,2,2,2,2, 1,2,0,2,1, 1,2])
     net.build_from_config(net_config)
 
-    sample_net = net.sample_from_net()
+    sample_net = net.sample_from_net(arch = [0,1,2,1,1, 1,2,2,2,2, 1,2,0,2,1, 1,2])
 
     estimator = MBv2LatencyTable(url='latency_lookup_table/mobile_lut.yaml')
 
@@ -249,10 +270,10 @@ if __name__ == "__main__":
     # estimator.predict_network_latency(net) # can not use
 
     net.eval()
-    torch.save(net.state_dict(), './models/test.pt')
+    torch.save(net.state_dict(), './models/latest_model2.pt')
 
     backbone = BackBoneMobileNetV2()
-    state_dict = torch.load('./models/test.pt')
+    state_dict = torch.load('./models/latest_model2.pt')
     backbone.load_state_dict(state_dict)
 
     print(net.config)
